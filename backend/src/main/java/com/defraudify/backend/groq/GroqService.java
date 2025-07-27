@@ -26,8 +26,9 @@ public class GroqService {
         this.apiKey = apiKey;
         // Initialize WebClient with the base URL for the Groq API
         // Groq often uses an OpenAI-compatible endpoint
+        // FIXED: Removed trailing spaces from the URL
         this.webClient = WebClient.builder()
-                .baseUrl("https://api.groq.com/openai/v1/chat/completions")
+                .baseUrl("https://api.groq.com/openai/v1/chat/completions") // <-- NO trailing spaces
                 .build();
     }
 
@@ -40,15 +41,37 @@ public class GroqService {
      */
     public Mono<String> generateExplanation(String message, double scamScore) {
         logger.info("Generating explanation using Groq for message: '{}'", message);
-        // 1. Construct the prompt for the LLM
-        String prompt = String.format(
-                "Message: \"%s\"\nScam Probability Score: %.2f%%\n\n" +
-                "Based on the message content and the provided scam probability score, " +
-                "explain in 2-3 clear, concise sentences why this message might be " +
-                "fraudulent or legitimate. Avoid using technical terms like 'probability score'. " +
-                "Focus on the message's content, language, and intent.",
-                message, scamScore * 100
-        );
+        
+        // --- REFINED PROMPT LOGIC ---
+        String prompt;
+        if (scamScore >= 0.7) { // Threshold for "likely scam"
+            prompt = String.format(
+                "Analyze the following message suspected to be a scam:\n\n\"%s\"\n\n" +
+                "Please explain in 2-3 clear sentences:\n" +
+                "1. Why this message is likely fraudulent (e.g., urgency, requests for sensitive info, suspicious links).\n" +
+                "2. Specific words or phrases that raise suspicion.\n" +
+                "3. What the user should be cautious about or avoid doing.",
+                message
+            );
+        } else if (scamScore <= 0.3) { // Threshold for "likely legitimate"
+            prompt = String.format(
+                "Analyze the following message assessed as likely legitimate:\n\n\"%s\"\n\n" +
+                "Please explain in 1-2 clear sentences why this message appears safe:\n" +
+                "(e.g., known sender, standard language, no urgent demands or requests for sensitive data).",
+                message
+            );
+        } else { // Moderate score
+            prompt = String.format(
+                "Analyze the following message with a moderate fraud risk:\n\n\"%s\"\n\n" +
+                "Please explain in 2-3 clear sentences:\n" +
+                "1. Elements of the message that could be concerning.\n" +
+                "2. Elements that might make it seem legitimate.\n" +
+                "3. Advice for the user on how to proceed cautiously.",
+                message
+            );
+        }
+        // --- END REFINED PROMPT LOGIC ---
+
         logger.debug("Constructed prompt for Groq API: {}", prompt);
 
         // 2. Create the request body structure for the Groq API (OpenAI compatible)

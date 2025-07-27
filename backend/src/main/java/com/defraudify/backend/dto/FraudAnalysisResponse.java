@@ -1,32 +1,57 @@
 package com.defraudify.backend.dto;
 
+import java.util.List; // Add this import
+
 public class FraudAnalysisResponse {
+
     private String message;
     private double scamScore;
-    private boolean isScam;
-    private String explanation; // Will be populated by LLM later
+    private String explanation;
+    private List<String> relatedLinks; // Add this field for web search results
 
     // Default constructor
     public FraudAnalysisResponse() {}
 
-    // Constructor for easy creation
-    public FraudAnalysisResponse(String message, double scamScore, boolean isScam, String explanation) {
+    // Constructor including relatedLinks
+    // Ensure this constructor signature matches how it's called in FraudDetectionService
+    public FraudAnalysisResponse(String message, double scamScore, String explanation, List<String> relatedLinks) {
         this.message = message;
         this.scamScore = scamScore;
-        this.isScam = isScam;
         this.explanation = explanation;
+        this.relatedLinks = relatedLinks; // Assign the new field
     }
 
     // Getters and Setters
-    public String getMessage() { return message; }
-    public void setMessage(String message) { this.message = message; }
+    public String getMessage() {
+        return message;
+    }
 
-    public double getScamScore() { return scamScore; }
-    public void setScamScore(double scamScore) { this.scamScore = scamScore; }
+    public void setMessage(String message) {
+        this.message = message;
+    }
 
-    public boolean isScam() { return isScam; }
-    public void setScam(boolean scam) { isScam = scam; }
+    public double getScamScore() {
+        return scamScore;
+    }
 
-    public String getExplanation() { return explanation; }
-    public void setExplanation(String explanation) { this.explanation = explanation; }
+    public void setScamScore(double scamScore) {
+        this.scamScore = scamScore;
+    }
+
+    public String getExplanation() {
+        return explanation;
+    }
+
+    public void setExplanation(String explanation) {
+        this.explanation = explanation;
+    }
+
+    // Getter and Setter for relatedLinks
+    public List<String> getRelatedLinks() {
+        return relatedLinks;
+    }
+
+    public void setRelatedLinks(List<String> relatedLinks) {
+        this.relatedLinks = relatedLinks;
+    }
 }

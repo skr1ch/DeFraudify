@@ -46,21 +46,69 @@ public class WebSearchService {
     public Mono<List<String>> searchForSimilarIncidents(String message, int maxResults) {
         logger.info("Initiating web search using Google PSE for message: '{}'", message);
 
-        // 1. Basic sanitization (keep essential characters for search)
-        //    Allow letters, numbers, spaces, and some punctuation often used in search queries
-        String sanitizedQuery = message.replaceAll("[^a-zA-Z0-9\\s\"'\\-_:]", " ").trim();
+        // --- IMPROVED SEARCH QUERY CONSTRUCTION ---
+        logger.info("Constructing search query for message: '{}'", message);
 
-        if (sanitizedQuery.isEmpty()) {
-            logger.warn("Sanitized query is empty. Returning empty list.");
-            return Mono.just(new ArrayList<>());
+        // 1. Basic sanitization (keep essential characters for search)
+        String sanitizedMessage = message.replaceAll("[^a-zA-Z0-9\\s\"'\\-_:]", " ").trim();
+        String lowerCaseMessage = sanitizedMessage.toLowerCase();
+
+        // 2. Build a targeted query using StringBuilder for efficiency
+        StringBuilder specificQuery = new StringBuilder();
+
+        // 3. Add key elements from the user's message (sanitized, first part)
+        if (!sanitizedMessage.isEmpty()) {
+            // Prioritize the beginning of the message for core context
+            String[] words = sanitizedMessage.split("\\s+");
+            // Limit core phrase length significantly (e.g., first 10-15 words)
+            int wordsToAdd = Math.min(words.length, 12);
+            for (int i = 0; i < wordsToAdd; i++) {
+                specificQuery.append(words[i]).append(" ");
+            }
         }
 
-        // 2. Construct the search query.
-        //    Enclose the user's message in quotes for exact phrase search.
-        //    Add common scam/fraud related terms to broaden the search for relevant results.
-        String searchQuery = "\"" + sanitizedQuery + "\" (scam OR fraud OR phishing OR warning OR report)";
+        // 4. Append specific scam type keywords based on message content
+        // --- Tech Support Scams ---
+        if (lowerCaseMessage.contains("tech support") || lowerCaseMessage.contains("microsoft") || lowerCaseMessage.contains("caller") || lowerCaseMessage.contains("computer") || lowerCaseMessage.contains("windows")) {
+            specificQuery.append("tech support scam microsoft impersonation windows ");
+        }
+        // --- Remote Access Scams ---
+        if (lowerCaseMessage.contains("remote access") || lowerCaseMessage.contains("teamviewer") || lowerCaseMessage.contains("anydesk") || lowerCaseMessage.contains("download") || lowerCaseMessage.contains("install")) {
+            specificQuery.append("remote access scam teamviewer anydesk fraud ");
+        }
+        // --- Financial Scams ---
+        if (lowerCaseMessage.contains("credit card") || lowerCaseMessage.contains("debit card") || lowerCaseMessage.contains("financial information") || lowerCaseMessage.contains("payment") || lowerCaseMessage.contains("fee") || lowerCaseMessage.contains("rs") || lowerCaseMessage.contains("rupees") || lowerCaseMessage.contains("pay")) {
+            specificQuery.append("credit card scam payment request fraud rupees ");
+        }
+        // --- Generic Phishing/Account Scams ---
+        if (lowerCaseMessage.contains("login") || lowerCaseMessage.contains("account") || lowerCaseMessage.contains("verify") || lowerCaseMessage.contains("credentials") || lowerCaseMessage.contains("password") || lowerCaseMessage.contains("otp")) {
+             specificQuery.append("phishing scam account verification fraud password ");
+        }
+        // --- Urgency/Pressure Tactics ---
+        if (lowerCaseMessage.contains("urgent") || lowerCaseMessage.contains("immediately") || lowerCaseMessage.contains("risk") || lowerCaseMessage.contains("crash") || lowerCaseMessage.contains("locked") || lowerCaseMessage.contains("blocked")) {
+             specificQuery.append("urgent scam pressure tactics warning ");
+        }
+        // --- Government/Official Impersonation ---
+        if (lowerCaseMessage.contains("irs") || lowerCaseMessage.contains("income tax") || lowerCaseMessage.contains("government") || lowerCaseMessage.contains("department") || lowerCaseMessage.contains("challan")) {
+             specificQuery.append("irs scam government impersonation challan fraud ");
+        }
 
-        logger.info("Constructed search query: {}", searchQuery);
+        // 5. Add general advice/search terms to find relevant resources
+        specificQuery.append("how to report what to do consumer advice");
+
+        // 6. Finalize the query string
+        String rawSearchQuery = specificQuery.toString().trim();
+        logger.debug("Raw constructed search query (before truncation): {}", rawSearchQuery);
+
+        // 7. Final Truncation: Keep it under 200-250 chars for better API performance and relevance
+        String finalSearchQuery;
+        if (rawSearchQuery.length() > 220) {
+             finalSearchQuery = rawSearchQuery.substring(0, 220).trim();
+        } else {
+             finalSearchQuery = rawSearchQuery;
+        }
+        logger.info("Final constructed search query: {}", finalSearchQuery); // Log the final query
+        // --- END IMPROVED SEARCH QUERY CONSTRUCTION ---
 
         logger.info("Making GET request to Google Custom Search API...");
         return webClient.get()
@@ -68,7 +116,7 @@ public class WebSearchService {
                         .path("/customsearch/v1")
                         .queryParam("key", this.apiKey)
                         .queryParam("cx", this.searchEngineId)
-                        .queryParam("q", searchQuery)
+                        .queryParam("q", finalSearchQuery) // <-- Use the improved, final query
                         .queryParam("num", Math.min(maxResults, 10)) // Google API limit per request
                         .build())
                 .retrieve()
@@ -134,7 +182,7 @@ public class WebSearchService {
             List<String> urls = results.stream()
                     .map(result -> (String) result.get("link"))
                     .filter(url -> url != null && !url.isEmpty())
-                    .limit(5)
+                    .limit(5) // Limits results extracted here to 5
                     .collect(Collectors.toList());
 
             logger.debug("Successfully extracted {} URLs from Google PSE response.", urls.size());

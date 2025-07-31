@@ -41,35 +41,24 @@ public class GroqService {
      */
     public Mono<String> generateExplanation(String message, double scamScore) {
         logger.info("Generating explanation using Groq for message: '{}'", message);
-        
-        // --- REFINED PROMPT LOGIC ---
-        String prompt;
-        if (scamScore >= 0.7) { // Threshold for "likely scam"
-            prompt = String.format(
-                "Analyze the following message suspected to be a scam:\n\n\"%s\"\n\n" +
-                "Please explain in 2-3 clear sentences:\n" +
-                "1. Why this message is likely fraudulent (e.g., urgency, requests for sensitive info, suspicious links).\n" +
-                "2. Specific words or phrases that raise suspicion.\n" +
-                "3. What the user should be cautious about or avoid doing.",
-                message
-            );
-        } else if (scamScore <= 0.3) { // Threshold for "likely legitimate"
-            prompt = String.format(
-                "Analyze the following message assessed as likely legitimate:\n\n\"%s\"\n\n" +
-                "Please explain in 1-2 clear sentences why this message appears safe:\n" +
-                "(e.g., known sender, standard language, no urgent demands or requests for sensitive data).",
-                message
-            );
-        } else { // Moderate score
-            prompt = String.format(
-                "Analyze the following message with a moderate fraud risk:\n\n\"%s\"\n\n" +
-                "Please explain in 2-3 clear sentences:\n" +
-                "1. Elements of the message that could be concerning.\n" +
-                "2. Elements that might make it seem legitimate.\n" +
-                "3. Advice for the user on how to proceed cautiously.",
-                message
-            );
-        }
+
+        // --- REFINED PROMPT LOGIC FOR CONSISTENT FORMAT ---
+        // Goal: Always produce a response with "Likely Scam Type", "Key Concerns", and "Recommended Actions".
+
+        String prompt = String.format(
+            "Analyze the following message:\n\"%s\"\n\n" +
+            "Scam Probability Score: %.2f\n\n" +
+            "Based on the message content and the score, provide your analysis in EXACTLY the following format. Do not use markdown or add extra headings:\n\n" +
+            "Likely Scam Type: [Identify the most probable type of scam based on the message and score, e.g., Phishing, Tech Support Scam, Lottery Scam, User Report, General Inquiry, etc. If the score is very low and it seems safe, state 'Unlikely to be Scam' or 'Safe/Legitimate'].\n\n" +
+            "Key Concerns:\n" +
+            "*   [List 2-3 specific concerns derived from the message content and the scam score. If the score is low and it seems safe, list 1-2 reasons why it appears safe or neutral.]\n" +
+            "*   [...]\n\n" +
+            "Recommended Actions:\n" +
+            "*   [Provide 2-3 clear, actionable steps the user should take based on the analysis. For low-risk/safe messages, provide general good practices.]\n" +
+            "*   [...]\n\n" +
+            "Ensure the response strictly follows this format.",
+            message, scamScore
+        );
         // --- END REFINED PROMPT LOGIC ---
 
         logger.debug("Constructed prompt for Groq API: {}", prompt);
@@ -78,8 +67,8 @@ public class GroqService {
         Map<String, Object> requestBody = new HashMap<>();
         // Use a suitable Groq model, e.g., llama3-8b-8192 or mixtral-8x7b-32768
         requestBody.put("model", "llama3-8b-8192");
-        requestBody.put("temperature", 0.7); // Adjust creativity vs. determinism
-        requestBody.put("max_tokens", 150); // Limit response length
+        requestBody.put("temperature", 0.5); // Slightly lower for more focused responses
+        requestBody.put("max_tokens", 250); // Increased limit for the structured response
 
         // Create the message object for the conversation
         Map<String, String> userMessage = new HashMap<>();
@@ -121,7 +110,7 @@ public class GroqService {
                 // Process the Map to extract the text from the response
                 .map(this::extractTextFromResponse)
                 // Handle potential errors gracefully
-                .onErrorReturn("Unable to generate explanation at this time (Groq API Error).");
+                .onErrorReturn("Unable to generate safeguarding advice at this time (Groq API Error).");
     }
 
     /**
@@ -183,7 +172,7 @@ public class GroqService {
 
             if (content.trim().isEmpty()) {
                 logger.info("Generated explanation content is empty: '{}'", content);
-                return "Generated explanation content is empty.";
+                return "Generated safeguarding advice content is empty.";
             }
 
             String finalText = content.trim();
@@ -191,10 +180,10 @@ public class GroqService {
             return finalText;
         } catch (ClassCastException | NullPointerException e) {
             logger.error("Critical error parsing Groq response structure: {}", e.getMessage(), e);
-            return "Error parsing explanation from AI response (Structure Error).";
+            return "Error parsing safeguarding advice from AI response (Structure Error).";
         } catch (Exception e) {
             logger.error("Unexpected error during response parsing: {}", e.getMessage(), e);
-            return "Error parsing explanation from AI response (Unexpected Error).";
+            return "Error parsing safeguarding advice from AI response (Unexpected Error).";
         }
     }
 }

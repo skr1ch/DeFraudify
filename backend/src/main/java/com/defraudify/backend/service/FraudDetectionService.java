@@ -13,8 +13,7 @@ import java.util.List;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.core.io.ClassPathResource; // Added import
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Service;
 
 import com.defraudify.backend.dto.FraudAnalysisResponse;
@@ -45,11 +44,9 @@ public class FraudDetectionService {
     private final BertFullTokenizer tokenizer;
     private final int maxLength = 128;
 
-    // Use constructor injection instead of field injection (addresses SonarLint warnings)
     private final GroqService groqService;
     private final WebSearchService webSearchService;
 
-    // Constructor for dependency injection
     public FraudDetectionService(GroqService groqService, WebSearchService webSearchService)
             throws ModelNotFoundException, MalformedModelException, IOException {
 
@@ -58,221 +55,234 @@ public class FraudDetectionService {
 
         logger.info("Initializing FraudDetectionService: Loading BERT model and tokenizer...");
 
-        // --- Load the Traced PyTorch Model ---
-        // Use the helper method to copy the model resource to a temporary file
         Path modelPath = copyResourceToTempFile("exported_model/bert-tiny-sms-spam-traced.pt");
         logger.info("Model file copied to temporary path: {}", modelPath.toAbsolutePath());
 
         Criteria<NDList, NDList> criteria = Criteria.builder()
                 .setTypes(NDList.class, NDList.class)
-                .optModelPath(modelPath) // Use the temporary file path
-                .optEngine("PyTorch") // Specify the engine
+                .optModelPath(modelPath)
+                .optEngine("PyTorch")
                 .build();
 
         this.model = criteria.loadModel();
         this.predictor = model.newPredictor();
         logger.info("PyTorch model loaded successfully.");
 
-        // --- Load the Vocabulary for the Tokenizer ---
-        // Use the helper method to copy the vocab resource to a temporary file
         Path vocabPath = copyResourceToTempFile("exported_model/vocab.txt");
         logger.info("Vocabulary file copied to temporary path: {}", vocabPath.toAbsolutePath());
 
         Vocabulary vocab = DefaultVocabulary.builder()
                 .optMinFrequency(1)
-                .addFromTextFile(vocabPath) // Use the temporary file path
+                .addFromTextFile(vocabPath)
                 .build();
 
-        this.tokenizer = new BertFullTokenizer(vocab, true); // true for lowercasing
+        this.tokenizer = new BertFullTokenizer(vocab, true);
         logger.info("BERT tokenizer initialized successfully.");
 
         logger.info("FraudDetectionService initialization complete.");
     }
 
-
-    /**
-     * Copies a resource file from the JAR/classpath to a temporary file.
-     * This is necessary because DJL often requires a file path, not a classpath resource URI,
-     * especially when running from a packaged JAR.
-     *
-     * @param resourcePath The path to the resource within the JAR (e.g., "exported_model/bert-tiny-sms-spam-traced.pt").
-     * @return The Path to the created temporary file.
-     * @throws IOException If the resource is not found or an error occurs during copying.
-     */
     private Path copyResourceToTempFile(String resourcePath) throws IOException {
-        // Use Spring's ClassPathResource for robust resource loading
         ClassPathResource resource = new ClassPathResource(resourcePath);
 
-        // Check if the resource exists
         if (!resource.exists()) {
             logger.error("Resource not found in classpath: {}", resourcePath);
             throw new FileNotFoundException("Resource not found: " + resourcePath);
         }
 
-        // Get the InputStream for the resource
         try (InputStream inputStream = resource.getInputStream()) {
-            // Create a temporary file. The prefix and suffix help identify it.
-            // deleteOnExit ensures cleanup when the JVM shuts down (basic cleanup).
             String fileName = Paths.get(resourcePath).getFileName().toString();
             File tempFile = File.createTempFile("djl_resource_", "_" + fileName);
-            tempFile.deleteOnExit(); // Basic cleanup mechanism
+            tempFile.deleteOnExit();
 
             logger.debug("Copying classpath resource '{}' to temporary file: {}", resourcePath, tempFile.getAbsolutePath());
 
-            // Copy the contents of the resource InputStream to the temporary file
             try (FileOutputStream outputStream = new FileOutputStream(tempFile)) {
                 inputStream.transferTo(outputStream);
             }
 
             logger.debug("Successfully copied resource to temporary file.");
-            // Return the Path object representing the temporary file
             return tempFile.toPath();
         } catch (IOException e) {
             logger.error("Failed to copy resource '{}' to temporary file.", resourcePath, e);
-            throw e; // Re-throw to propagate the error
+            throw e;
         }
     }
 
-
-    /**
-     * Calculates the scam probability for a given message using the loaded BERT model.
-     *
-     * @param message The input text message to analyze.
-     * @return The calculated scam probability (between 0.0 and 1.0).
-     * @throws TranslateException If an error occurs during model inference.
-     */
     public double getScamProbability(String message) throws TranslateException {
         logger.info("Calculating scam probability for message: {}", message);
 
         try (NDManager manager = NDManager.newBaseManager()) {
-            // 1. Tokenize the input message using the BERT tokenizer
             List<String> tokens = tokenizer.tokenize(message);
             Vocabulary vocab = tokenizer.getVocabulary();
 
-            // 2. Convert tokens to their corresponding IDs using the vocabulary
             long[] tokenIds = tokens.stream().mapToLong(vocab::getIndex).toArray();
 
-            // 3. Handle the padding token ID ([PAD])
             long padTokenId = vocab.getIndex("[PAD]");
             if (padTokenId == -1) {
-                padTokenId = 0; // Default fallback if [PAD] is not found
+                padTokenId = 0;
                 logger.warn("[PAD] token not found in vocabulary, using ID 0 as fallback.");
             }
 
-            // 4. Prepare input arrays (input_ids and attention_mask) for the model
             long[] inputIds = new long[maxLength];
             long[] attentionMask = new long[maxLength];
-            Arrays.fill(inputIds, padTokenId);      // Fill input_ids with pad token ID
-            Arrays.fill(attentionMask, 0L);         // Fill attention_mask with 0
+            Arrays.fill(inputIds, padTokenId);
+            Arrays.fill(attentionMask, 0L);
 
-            // 5. Copy actual token IDs and set corresponding attention mask values to 1
             int length = Math.min(tokenIds.length, maxLength);
             System.arraycopy(tokenIds, 0, inputIds, 0, length);
-            Arrays.fill(attentionMask, 0, length, 1L); // Set mask to 1 for actual tokens
+            Arrays.fill(attentionMask, 0, length, 1L);
 
-            // 6. Create NDArrays for input to the model
             NDArray inputIdsArray = manager.create(inputIds).reshape(1, maxLength);
             NDArray attentionMaskArray = manager.create(attentionMask).reshape(1, maxLength);
 
-            // 7. Create the input NDList for the predictor
             NDList input = new NDList(inputIdsArray, attentionMaskArray);
 
-            // 8. Perform prediction using the loaded model
             NDList output = predictor.predict(input);
 
-            // 9. Check if the output is valid
             if (output.isEmpty()) {
                 throw new TranslateException("Model prediction returned an empty output.");
             }
 
-            // 10. Extract probabilities (apply softmax to logits)
-            NDArray probabilities = output.get(0).softmax(1); // Apply softmax along class dimension (dim=1)
+            NDArray probabilities = output.get(0).softmax(1);
+            double scamProbability = probabilities.getFloat(0, 1);
 
-            // 11. Get the probability for the "scam" class (index 1)
-            double scamProbability = probabilities.getFloat(0, 1); // Get value from batch 0, class 1
-
-            // === Apply Heuristic-Based Score Boosting ===
+            // === Apply Heuristic-Based Score Boosting (Updated) ===
             double boostedScore = scamProbability;
             String lowerCaseMessage = message.toLowerCase();
 
-            // Boost based on common scam indicators in the message content
-            if (lowerCaseMessage.contains("urgent") || lowerCaseMessage.contains("asap")) {
-                boostedScore = Math.min(boostedScore + 0.2, 1.0);
+            // --- NEW/ENHANCED BOOSTING FOR SHORT SCAM PHRASES ---
+            if (lowerCaseMessage.contains("click here") && lowerCaseMessage.contains("claim")) {
+                boostedScore = Math.min(boostedScore + 0.4, 1.0);
+                logger.debug("Applied boost for 'click here' + 'claim'");
             }
-            if (lowerCaseMessage.contains("click") && lowerCaseMessage.contains("link")) {
+            if (lowerCaseMessage.matches(".*\\b(free|prize|winner|congratulations)\\b.*\\$\\d+.*")) {
+                boostedScore = Math.min(boostedScore + 0.35, 1.0);
+                logger.debug("Applied boost for prize + $ pattern");
+            }
+            if (lowerCaseMessage.matches(".*\\b(urgent|act now|limited time)\\b.*")) {
                 boostedScore = Math.min(boostedScore + 0.25, 1.0);
+                logger.debug("Applied boost for urgency terms");
             }
+            // --- END NEW BOOSTING ---
+
+            // --- EXISTING & ENHANCED BOOSTING RULES ---
+
+            // Universal Urgency & Threats (from Pasted_Text_1753618099621.txt)
+            if (lowerCaseMessage.contains("urgent") || lowerCaseMessage.contains("asap") ||
+                lowerCaseMessage.contains("immediately") || lowerCaseMessage.contains("risk") ||
+                lowerCaseMessage.contains("locked") || lowerCaseMessage.contains("blocked") ||
+                lowerCaseMessage.contains("expired") || lowerCaseMessage.contains("deadline") ||
+                lowerCaseMessage.contains("suspended")) {
+                boostedScore = Math.min(boostedScore + 0.2, 1.0);
+                logger.debug("Applied boost for universal urgency/threat terms");
+            }
+
+            // Suspicious Links/Attachments (from Pasted_Text_1753618099621.txt)
+            // Note: Actual links are removed by sanitization, but we can look for link-related words
+            if (lowerCaseMessage.contains("click") || lowerCaseMessage.contains("link") ||
+                lowerCaseMessage.contains("attachment") || lowerCaseMessage.contains("download")) {
+                // Only boost if combined with other suspicious context
+                if (lowerCaseMessage.contains("verify") || lowerCaseMessage.contains("secure") ||
+                    lowerCaseMessage.contains("update") || lowerCaseMessage.contains("confirm")) {
+                     boostedScore = Math.min(boostedScore + 0.2, 1.0);
+                     logger.debug("Applied boost for suspicious link context");
+                }
+            }
+
+            // Requests for Personal Data (from Pasted_Text_1753618099621.txt)
+            if (lowerCaseMessage.contains("password") || lowerCaseMessage.contains("pin") ||
+                lowerCaseMessage.contains("credentials") || lowerCaseMessage.contains("otp") ||
+                lowerCaseMessage.contains("ssn") || lowerCaseMessage.contains("social security") ||
+                lowerCaseMessage.contains("account number") || lowerCaseMessage.contains("id number")) {
+                boostedScore = Math.min(boostedScore + 0.25, 1.0);
+                logger.debug("Applied boost for requests for personal data");
+            }
+
+            // Common Email Subject Lines and Body Text Patterns (from Pasted_Text_1753618099621.txt)
+            if (lowerCaseMessage.contains("session expired") || lowerCaseMessage.contains("verify identity") ||
+                lowerCaseMessage.contains("secure account") || lowerCaseMessage.contains("change password") ||
+                lowerCaseMessage.contains("suspicious activity") || lowerCaseMessage.contains("invoice due") ||
+                lowerCaseMessage.contains("payment status") || lowerCaseMessage.contains("request")) {
+                boostedScore = Math.min(boostedScore + 0.15, 1.0);
+                logger.debug("Applied boost for common email scam phrases");
+            }
+
+            // BEC Specific Patterns (from Pasted_Text_1753618099621.txt)
+            if (lowerCaseMessage.contains("due to the current situation") || lowerCaseMessage.contains("de-activation") ||
+                lowerCaseMessage.contains("password check required")) {
+                boostedScore = Math.min(boostedScore + 0.2, 1.0);
+                logger.debug("Applied boost for BEC specific phrases");
+            }
+
+            // Previously existing rules (slightly adjusted weights)
             if (lowerCaseMessage.contains("pay now") || lowerCaseMessage.contains("pay ₹") || lowerCaseMessage.contains("pay rs")) {
-                boostedScore = Math.min(boostedScore + 0.3, 1.0);
+                boostedScore = Math.min(boostedScore + 0.3, 1.0); // Kept high
             }
-            if (lowerCaseMessage.contains("challan")) { // Specific term often used in Indian scams
+            if (lowerCaseMessage.contains("challan")) {
                 boostedScore = Math.min(boostedScore + 0.15, 1.0);
             }
             if (lowerCaseMessage.contains("tech support") || lowerCaseMessage.contains("caller claiming")) {
-                boostedScore = Math.min(boostedScore + 0.25, 1.0);
+                boostedScore = Math.min(boostedScore + 0.25, 1.0); // Kept
             }
             if (lowerCaseMessage.contains("remote access") || lowerCaseMessage.contains("anydesk") || lowerCaseMessage.contains("teamviewer")) {
-                boostedScore = Math.min(boostedScore + 0.2, 1.0);
+                boostedScore = Math.min(boostedScore + 0.2, 1.0); // Kept
             }
             if (lowerCaseMessage.contains("credit card") || lowerCaseMessage.contains("debit card") || lowerCaseMessage.contains("financial information")) {
-                boostedScore = Math.min(boostedScore + 0.2, 1.0);
+                boostedScore = Math.min(boostedScore + 0.2, 1.0); // Kept
             }
             if (lowerCaseMessage.contains("what should i do") || lowerCaseMessage.contains("feel pressured")) {
-                // User describing being targeted/scammed
-                boostedScore = Math.min(boostedScore + 0.15, 1.0);
-            }
-            // Boost based on message length (longer, detailed messages describing incidents might be genuine user reports)
-            if (message.length() > 200) {
-                boostedScore = Math.min(boostedScore + 0.1, 1.0);
+                boostedScore = Math.min(boostedScore + 0.15, 1.0); // Kept
             }
 
+            // Message length adjustment (slightly stronger for very short or very long)
+            if (message.length() < 20) { // Very short, might be a quick scam phrase
+                 boostedScore = Math.min(boostedScore + 0.1, 1.0);
+                 logger.debug("Applied boost for very short message length");
+            } else if (message.length() > 300) { // Very long, might be a detailed user report (reduce boost)
+                // Reduce boost slightly for very long messages, unless they contain strong scam keywords
+                // This is a nuanced adjustment; we mostly rely on keywords.
+                // The original +0.1 for >200 is kept but can be overridden by stronger rules.
+                if (!(lowerCaseMessage.contains("urgent") || lowerCaseMessage.contains("click") || lowerCaseMessage.contains("password") || lowerCaseMessage.contains("pay"))) {
+                     // If it's long but doesn't have strong keywords, reduce the length-based boost
+                     // This is implicit in not adding the +0.1 if no strong keywords are present.
+                } else {
+                    // If it's long AND has strong keywords, still apply the original boost
+                    boostedScore = Math.min(boostedScore + 0.1, 1.0);
+                }
+            }
+
+
             logger.info("Original ML Score: {}, Boosted Scam Score: {}", scamProbability, boostedScore);
-            return boostedScore; // Return the final boosted score
+            return boostedScore;
 
         } catch (Exception e) {
             logger.error("An error occurred during ML inference for message: {}", message, e);
-            // Wrap any unexpected exception in TranslateException to match method signature
             throw new TranslateException("Failed to calculate scam probability due to an internal error.", e);
         }
     }
 
-    /**
-     * Performs the full fraud analysis: ML scoring, LLM explanation, and web search for related incidents.
-     *
-     * @param message The user's input message.
-     * @return A Mono containing the complete FraudAnalysisResponse.
-     */
     public Mono<FraudAnalysisResponse> performFullAnalysis(String message) {
         logger.info("Initiating full fraud analysis workflow for message: {}", message);
 
-        // 1. Get the scam score from the ML model (synchronous call wrapped in Mono)
         double scamScore;
         try {
             scamScore = getScamProbability(message);
         } catch (Exception e) {
             logger.error("ML Inference failed for message: {}", message, e);
-            // Return a Mono.error if the core ML step fails
             return Mono.error(new RuntimeException("Machine Learning inference failed.", e));
         }
 
-        // 2. Generate explanation using GroqService (asynchronous)
-        // onErrorReturn provides a fallback explanation if the LLM call fails
         Mono<String> explanationMono = groqService.generateExplanation(message, scamScore)
                 .onErrorReturn("Unable to generate explanation at this time. Please try again later.");
 
-        // 3. Search for related incidents using WebSearchService (asynchronous)
-        // onErrorReturn provides a fallback (empty list) if the web search fails
-        Mono<List<String>> relatedLinksMono = webSearchService.searchForSimilarIncidents(message, 5) // Request up to 5 links
+        Mono<List<String>> relatedLinksMono = webSearchService.searchForSimilarIncidents(message, 5)
                 .onErrorReturn(Collections.emptyList());
 
-        // 4. Combine the results from the asynchronous operations (explanation and links)
-        // Mono.zip waits for both Monos to complete and combines their results into a tuple
         return Mono.zip(explanationMono, relatedLinksMono)
-                // 5. Map the combined results (tuple) to the final FraudAnalysisResponse object
                 .map(tuple -> {
-                    String explanation = tuple.getT1(); // Get explanation from the first part of the tuple
-                    List<String> relatedLinks = tuple.getT2(); // Get links from the second part of the tuple
-                    // Create and return the response object
+                    String explanation = tuple.getT1();
+                    List<String> relatedLinks = tuple.getT2();
                     return new FraudAnalysisResponse(message, scamScore, explanation, relatedLinks);
                 });
     }

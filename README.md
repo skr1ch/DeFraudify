@@ -49,10 +49,3 @@ This is the backend component of the DeFraudify application. It's a Java-based R
   - **Groq API Key:** For generating explanations.
   - **Google PSE API Key & Search Engine ID:** For finding related links.
 
-## Project Setup
-
-### 1. Clone the Repository
-
-```bash
-git clone <your-repo-url> # Replace with your actual repository URL
-cd DeFraudify/backend

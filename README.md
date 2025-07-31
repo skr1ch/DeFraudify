@@ -20,56 +20,6 @@ The backend operates as a RESTful API, exposing endpoints (like `/api/analyze`) 
 
 5.  **Response Aggregation:** The results from the Groq API (explanation) and the Google PSE API (related links) are collected. Along with the original message and the final `scamScore` (from ML + Heuristics), they are packaged into a structured JSON response and sent back to the client that made the request.
 
-## System Architecture Overview
-
-The backend is built using the Spring Boot framework, which simplifies the creation of stand-alone, production-grade Java applications. The architecture can be visualized as follows:
-+-----------------+
-| Client App | (e.g., Web Frontend)
-+--------+--------+
-|
-HTTP POST /api/analyze
-|
-+--------v--------+
-| Spring Boot |
-| Backend |
-| |
-| +-------------+ |
-| | Controller | |
-| | (FraudDetectionController) |
-| +-------------+ |
-| | |
-| v |
-| +-------------+ |
-| | Main Service| |
-| | (FraudDetectionService) |
-| +-------------+ |
-| | |
-| +----+----+ |
-| | | |
-| v v |
-+---------+--+ +-----+--+ |
-| ML Service | | AI Service | (Groq)
-| (DJL) | | (WebClient)|
-+------------+ +------------+
-| |
-Loads BERT Model Calls Groq API
-| |
-v v
-+----------------------+ +----------------------+
-| Google PSE Service | | External APIs |
-| (WebClient) |<->| Groq API |
-+----------------------+ | Google PSE API |
-| +----------------------+
-Calls Google PSE API
-|
-v
-+----------------------+
-| External APIs |
-| Google PSE API |
-+----------------------+
-
-**Caption:** *Diagram illustrating the flow of a request through the DeFraudify backend. The controller receives the request, the main service coordinates the analysis, and dedicated services handle interactions with the Machine Learning model (via DJL), the Groq API, and the Google PSE API.*
-
 ### Key Components
 
 *   **Spring Boot Application:** The foundation, handling HTTP requests, dependency injection, and application lifecycle.
@@ -104,36 +54,6 @@ v
 *   **Web Search API:** Google Programmable Search Engine (PSE) API.
 *   **HTTP Client:** Spring WebClient (for asynchronous calls to external APIs).
 *   **Reactive Programming:** Project Reactor (used by WebClient, helps manage asynchronous operations efficiently).
-
-## Project Structure (Key Directories & Files)
-DeFraudify/backend/
-├── src/
-│ ├── main/
-│ │ ├── java/
-│ │ │ └── com/
-│ │ │ └── defraudify/
-│ │ │ └── backend/
-│ │ │ ├── BackendApplication.java (Main Spring Boot class)
-│ │ │ ├── controller/ (REST API Controllers)
-│ │ │ │ └── FraudDetectionController.java
-│ │ │ ├── dto/ (Data Transfer Objects for API requests/responses)
-│ │ │ │ ├── FraudAnalysisRequest.java
-│ │ │ │ └── FraudAnalysisResponse.java
-│ │ │ ├── groq/ (Service for interacting with Groq API)
-│ │ │ │ └── GroqService.java
-│ │ │ ├── search/ (Service for interacting with Google PSE API)
-│ │ │ │ └── WebSearchService.java
-│ │ │ └── service/ (Core business logic)
-│ │ │ └── FraudDetectionService.java (Loads model, orchestrates analysis)
-│ │ └── resources/
-│ │ ├── exported_model/ (Contains the ML model files)
-│ │ │ ├── pytorch_model.bin (The main PyTorch model file)
-│ │ │ ├── vocab.txt (Vocabulary file for the tokenizer)
-│ │ │ └── ... (other Hugging Face model files like config.json)
-│ │ └── application.properties (Configuration file for API keys, etc.)
-├── pom.xml (Maven build configuration file)
-└── README.md (This file)
-
 
 ## API Endpoints
 
